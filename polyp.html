@@ -1,0 +1,395 @@
+from IPython.display import display, HTML
+from IPython.display import display, HTML
+from google.colab import output
+import json
+import base64
+import io
+from PIL import Image
+import torch
+
+# Create a Python function to handle image processing and prediction
+def process_image(image_data):
+    try:
+        # Remove header from base64 data if present
+        if ',' in image_data:
+            image_data = image_data.split(',')[1]
+            
+        # Decode the base64 image
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Apply the same transformations as during training
+        image_tensor = transform(image).unsqueeze(0).cuda()
+        
+        # Get prediction
+        model.eval()  # Set model to evaluation mode
+        with torch.no_grad():
+            outputs = model(image_tensor)
+            if isinstance(outputs, dict) and "logits" in outputs:
+                logits = outputs["logits"]
+            else:
+                logits = outputs
+                
+            probabilities = torch.nn.functional.softmax(logits, dim=1)[0]
+            prediction = logits.argmax(dim=1).item()
+            confidence = probabilities[prediction].item()
+        
+        # Return result
+        return {
+            "success": True,
+            "prediction": class_names[prediction],
+            "confidence": float(confidence)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# Register the function so JavaScript can call it
+output.register_callback('process_image', process_image)
+
+# Create JavaScript bridge
+js_bridge = """
+<script>
+// Global function to process an image
+window.processImage = async function(imageData) {
+    return new Promise((resolve, reject) => {
+        google.colab.kernel.invokeFunction('process_image', [imageData], {}).then(function(result) {
+            const data = result.data['application/json'];
+            resolve(data);
+        }).catch(function(error) {
+            reject(error);
+        });
+    });
+}
+</script>
+"""
+
+# Display the JavaScript bridge
+display(HTML(js_bridge))
+# First, add React and ReactDOM from CDN
+react_cdn = """
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
+<div id="react-root"></div>
+"""
+
+display(HTML(react_cdn))
+
+# Now create our React app
+react_app = """
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+function PolypDetectionApp() {
+  const [imagePreview, setImagePreview] = useState(null);
+  const [imageData, setImageData] = useState(null);
+  const [prediction, setPrediction] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  const handleImageUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    // Reset previous results
+    setPrediction(null);
+    setError(null);
+    
+    // Read and display the image
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImagePreview(e.target.result);
+      setImageData(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  const detectPolyp = async () => {
+    if (!imageData) {
+      setError("Please upload an image first");
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Call the Python function through our bridge
+      const result = await window.processImage(imageData);
+      
+      if (result.success) {
+        setPrediction({
+          class: result.prediction,
+          confidence: result.confidence
+        });
+      } else {
+        setError(result.error || "Failed to process image");
+      }
+    } catch (err) {
+      setError("Error connecting to the model: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <div style={{
+      fontFamily: 'Arial, sans-serif', 
+      maxWidth: '800px', 
+      margin: '0 auto', 
+      padding: '20px'
+    }}>
+      {/* Header */}
+      <div style={{
+        backgroundColor: '#4682B4', 
+        color: 'white', 
+        padding: '20px', 
+        borderRadius: '8px', 
+        marginBottom: '20px', 
+        textAlign: 'center'
+      }}>
+        <h1 style={{margin: '0 0 10px 0'}}>Polyp Detection System</h1>
+        <p>Early detection of colorectal polyps using MambaVision architecture</p>
+      </div>
+      
+      {/* Abstract */}
+      <div style={{
+        backgroundColor: '#f5f5f5', 
+        padding: '15px', 
+        borderRadius: '8px', 
+        marginBottom: '20px', 
+        border: '1px solid #ddd'
+      }}>
+        <h2 style={{borderBottom: '1px solid #ddd', paddingBottom: '10px'}}>Project Abstract</h2>
+        <p>
+          Early diagnosis and prevention of colorectal cancer are based on the detection and 
+          classification of polyps. Polyps are abnormal growths of tissue that develop on the 
+          lining of the colon, and while most are benign, some can develop into colorectal cancer over time.
+        </p>
+        <p>
+          Polyp detection is a critical task in the medical field, as early identification of polyps 
+          can significantly reduce the risk of colorectal cancer.
+        </p>
+      </div>
+      
+      {/* Main content - two columns on larger screens */}
+      <div style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
+        {/* Upload section */}
+        <div style={{
+          flex: 1, 
+          backgroundColor: 'white', 
+          padding: '20px', 
+          borderRadius: '8px', 
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3>Upload Image</h3>
+          
+          <div style={{marginBottom: '15px'}}>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              style={{
+                width: '100%',
+                padding: '10px',
+                border: '1px dashed #ccc',
+                borderRadius: '4px'
+              }}
+            />
+          </div>
+          
+          {imagePreview && (
+            <div style={{marginTop: '15px'}}>
+              <h4>Image Preview:</h4>
+              <div style={{
+                border: '1px solid #ddd', 
+                borderRadius: '4px', 
+                overflow: 'hidden',
+                textAlign: 'center'
+              }}>
+                <img 
+                  src={imagePreview} 
+                  alt="Preview" 
+                  style={{
+                    maxWidth: '100%', 
+                    maxHeight: '200px', 
+                    objectFit: 'contain'
+                  }} 
+                />
+              </div>
+            </div>
+          )}
+          
+          <button 
+            onClick={detectPolyp}
+            disabled={loading || !imagePreview}
+            style={{
+              marginTop: '15px',
+              padding: '10px 15px',
+              backgroundColor: loading || !imagePreview ? '#cccccc' : '#4682B4',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: loading || !imagePreview ? 'not-allowed' : 'pointer',
+              width: '100%',
+              fontWeight: 'bold'
+            }}
+          >
+            {loading ? 'Analyzing...' : 'Detect Polyp'}
+          </button>
+          
+          {error && (
+            <div style={{
+              marginTop: '15px',
+              color: '#d32f2f',
+              padding: '10px',
+              backgroundColor: '#ffebee',
+              borderRadius: '4px'
+            }}>
+              {error}
+            </div>
+          )}
+        </div>
+        
+        {/* Results section */}
+        <div style={{
+          flex: 1, 
+          backgroundColor: 'white', 
+          padding: '20px', 
+          borderRadius: '8px', 
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3>Detection Result</h3>
+          
+          {!prediction && !loading && (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '200px',
+              backgroundColor: '#f9f9f9',
+              borderRadius: '4px',
+              border: '1px dashed #ccc'
+            }}>
+              <div style={{fontSize: '48px', marginBottom: '10px'}}>🖼️</div>
+              <p style={{color: '#666'}}>Upload and analyze an image to see results</p>
+            </div>
+          )}
+          
+          {loading && (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '200px'
+            }}>
+              <div style={{
+                width: '50px',
+                height: '50px',
+                border: '5px solid #f3f3f3',
+                borderTop: '5px solid #4682B4',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                marginBottom: '20px'
+              }}></div>
+              <style>{`
+                @keyframes spin {
+                  0% { transform: rotate(0deg); }
+                  100% { transform: rotate(360deg); }
+                }
+              `}</style>
+              <p>Analyzing image...</p>
+            </div>
+          )}
+          
+          {prediction && !loading && (
+            <div style={{
+              padding: '20px',
+              borderRadius: '8px',
+              backgroundColor: prediction.class === 'Polyp' ? '#ffeaea' : '#eaffea',
+              textAlign: 'center'
+            }}>
+              <div style={{
+                width: '80px',
+                height: '80px',
+                borderRadius: '50%',
+                backgroundColor: prediction.class === 'Polyp' ? '#ffcccb' : '#c8e6c9',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '40px',
+                margin: '0 auto 20px auto'
+              }}>
+                {prediction.class === 'Polyp' ? '⚠️' : '✅'}
+              </div>
+              
+              <h2 style={{
+                color: prediction.class === 'Polyp' ? '#c62828' : '#2e7d32',
+                marginBottom: '10px'
+              }}>
+                {prediction.class}
+              </h2>
+              
+              <p style={{marginBottom: '20px'}}>
+                Confidence: {(prediction.confidence * 100).toFixed(1)}%
+              </p>
+              
+              <div style={{
+                width: '100%',
+                backgroundColor: '#e0e0e0',
+                borderRadius: '10px',
+                height: '20px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${prediction.confidence * 100}%`,
+                  backgroundColor: prediction.class === 'Polyp' ? '#ef5350' : '#66bb6a',
+                  borderRadius: '10px',
+                  transition: 'width 0.5s'
+                }}></div>
+              </div>
+              
+              <p style={{
+                marginTop: '20px',
+                fontSize: '14px',
+                color: '#555'
+              }}>
+                {prediction.class === 'Polyp' 
+                  ? 'A polyp has been detected. Please consult with a healthcare professional for further evaluation.' 
+                  : 'No polyp detected in this image. Regular screenings are still recommended.'}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Footer */}
+      <div style={{
+        marginTop: '30px',
+        textAlign: 'center',
+        color: '#666',
+        fontSize: '12px'
+      }}>
+        <p>This is a demonstration interface for the MambaVision-based polyp detection model.</p>
+        <p>For clinical use, please consult with healthcare professionals.</p>
+      </div>
+    </div>
+  );
+}
+
+// Render the app
+ReactDOM.render(
+  <PolypDetectionApp />,
+  document.getElementById('react-root')
+);
+</script>
+"""
+
+display(HTML(react_app))
